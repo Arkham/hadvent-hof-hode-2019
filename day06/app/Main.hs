@@ -193,16 +193,19 @@ we would have something like this
 type Distance = HashMap Node [Node]
 
 distanceFrom :: Node -> [Orbit] -> Distance
-distanceFrom source orbits = distanceFrom' orbits initial
+distanceFrom source orbits = foldl distanceFrom' initial (map fst orbits)
   where
+    orbitMap = HashMap.fromList orbits
     initial = HashMap.singleton source []
-    distanceFrom' [] acc = acc
-    distanceFrom' ((satellite, primary):rest) acc =
-      case (HashMap.lookup satellite acc, HashMap.lookup primary acc) of
-        (Just _, _) -> distanceFrom' rest acc
-        (Nothing, Just v) ->
-          distanceFrom' rest (HashMap.insert satellite (primary : v) acc)
-        (Nothing, Nothing) -> distanceFrom' (rest <> [(satellite, primary)]) acc
+    getCachedHops key result =
+      case (HashMap.lookup key result, HashMap.lookup key orbitMap) of
+        (Just value, _) -> (value, result)
+        (Nothing, Just primary) ->
+          let (primaryHops, newResult) = getCachedHops primary result
+              newValue = primary : primaryHops
+           in (newValue, HashMap.insert key newValue newResult)
+        (Nothing, Nothing) -> ([], result)
+    distanceFrom' result satellite = snd $ getCachedHops satellite result
 
 {-|
 In this case we just need to find the first node that is not part of both hopping
