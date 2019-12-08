@@ -8,6 +8,7 @@ import qualified Data.Text.IO as TI
 import qualified Data.Vector as Vector
 import Data.Vector ((!), (//))
 import qualified Debug.Trace
+import qualified Safe
 
 {-|
 
@@ -79,36 +80,122 @@ Max thruster signal 43210 (from phase setting sequence 4,3,2,1,0):
 Try every combination of phase settings on the amplifiers. What is the highest
 signal that can be sent to the thrusters?
 
+# Part Two
+
+Most of the amplifiers are connected as they were before; amplifier A's output
+is connected to amplifier B's input, and so on. However, the output from
+amplifier E is now connected into amplifier A's input. This creates the
+feedback loop: the signal will be sent through the amplifiers many times.
+
+In feedback loop mode, the amplifiers need totally different phase settings:
+integers from 5 to 9, again each used exactly once. These settings will cause
+the Amplifier Controller Software to repeatedly take input and produce output
+many times before halting. Provide each amplifier its phase setting at its
+first input instruction; all further input/output instructions are for signals.
+
+Don't restart the Amplifier Controller Software on any amplifier during this
+process. Each one should continue receiving and sending signals until it halts.
+
+All signals sent or received in this process will be between pairs of
+amplifiers except the very first signal and the very last signal. To start the
+process, a 0 signal is sent to amplifier A's input exactly once.
+
+Eventually, the software on the amplifiers will halt after they have processed
+the final loop. When this happens, the last output signal from amplifier E is
+sent to the thrusters. Your job is to find the largest output signal that can
+be sent to the thrusters using the new phase settings and feedback loop
+arrangement.
+
+Here are some example programs:
+
+Max thruster signal 139629729 (from phase setting sequence 9,8,7,6,5):
+
+3,26,1001,26,-4,26,3,27,1002,27,2,27,1,27,26,27,4,27,1001,28,-1,28,1005,28,6,99,0,0,5
+
 -}
 main :: IO ()
 main = do
   contents <- TI.readFile "input.txt"
   let memory = Vector.fromList $ map parseNumber $ T.splitOn "," contents
-  let availableSettings = List.permutations [0 .. 4]
-  let values =
-        sequence $ map (calculateSetting (Just 0) memory) availableSettings
-  case values of
+  putStrLn "Part One"
+  testThusters [0] memory (List.permutations [0 .. 4]) linearSetting
+  putStrLn "Part Two"
+  testThusters [0] memory (List.permutations [5 .. 9]) cyclicSetting
+
+testThusters :: [Value] -> Memory -> [[Integer]] -> SettingCalculator -> IO ()
+testThusters input memory settings calculator =
+  case sequence $ map (calculator input memory) settings of
     Just v -> print (maximum v)
     Nothing -> putStrLn "Something went wrong"
 
-calculateSetting :: Maybe Int -> Memory -> [Int] -> Maybe Int
-calculateSetting inputSignal memory settings =
+buildProgram :: Memory -> Program
+buildProgram memory =
+  Program {_ip = 0, _memory = memory, _output = [], _returnValue = Nothing}
+
+type SettingCalculator = [Value] -> Memory -> [Integer] -> Maybe Value
+
+linearSetting :: [Value] -> Memory -> [Integer] -> Maybe Value
+linearSetting inputSignal memory settings =
+  Safe.headMay $
   foldl
-    (\output elem ->
-       output >>=
-       (\value ->
-          let (Program _ returnValue) =
-                runProgram [elem, value] (Program memory Nothing)
-           in returnValue))
+    (\input elem ->
+       case input of
+         [value] ->
+           let newProgram = runProgram [elem, value] (buildProgram memory)
+            in _output newProgram
+         _ -> [])
     inputSignal
     settings
 
-type Memory = Vector.Vector Int
+cyclicSetting :: [Value] -> Memory -> [Integer] -> Maybe Value
+cyclicSetting input memory settings = runThis input amps
+  where
+    amps = map (\n -> (buildProgram memory, n, False)) settings
+    runThis values list =
+      case runThis' values list of
+        (Nothing, output, newAmps) -> runThis output (reverse newAmps)
+        (Just _, output, _) -> Safe.headMay output
+    runThis' values list =
+      foldl
+        (\(returnValue, output, acc) (program, setting, alreadyInitialized) ->
+           case output of
+             value:rest ->
+               let newInput =
+                     (if alreadyInitialized
+                        then [value]
+                        else [setting, value])
+                   newProgram = runProgram newInput program
+                   newOutput = _output newProgram
+                   newReturnValue = returnValue `orElse` _returnValue newProgram
+                in ( newReturnValue
+                   , newOutput
+                   , (newProgram, setting, True) : acc)
+             _ -> (returnValue, output, acc))
+        (Nothing, values, [])
+        list
+
+type Value = Integer
+
+type Memory = Vector.Vector Value
 
 data Program =
-  Program Memory (Maybe Int)
+  Program
+    { _memory :: Memory
+    , _ip :: Int
+    , _output :: [Value]
+    , _returnValue :: Maybe Int
+    }
+  deriving (Show)
 
-type Input = [Int]
+setMemory :: Memory -> Program -> Program
+setMemory memory program = program {_memory = memory}
+
+addOutput :: Value -> Program -> Program
+addOutput value program@(Program {_output = output}) =
+  program {_output = value : output}
+
+setReturnValue :: Int -> Program -> Program
+setReturnValue value program = program {_returnValue = Just value}
 
 trace :: Show a => T.Text -> a -> a
 trace message value =
@@ -131,14 +218,11 @@ data Instruction
   | Equals PMode PMode PMode
   deriving (Eq, Show)
 
-runProgram :: Input -> Program -> Program
-runProgram = runProgram' 0
-
-parseOpcode :: Int -> Instruction
+parseOpcode :: Value -> Instruction
 parseOpcode opcode =
   let twoDigitOpcode = opcode `mod` 100
       parseParameterMode 0 = Position
-      parseParameterMode _ = Immediate
+      parseParameterMode 1 = Immediate
       p1 = parseParameterMode $ opcode `div` 100 `mod` 10
       p2 = parseParameterMode $ opcode `div` 1000 `mod` 10
       p3 = parseParameterMode $ opcode `div` 10000 `mod` 10
@@ -151,45 +235,50 @@ parseOpcode opcode =
         6 -> JumpIfFalse p1 p2
         7 -> LessThan p1 p2 p3
         8 -> Equals p1 p2 p3
-        _ -> Halt
+        99 -> Halt
 
-runProgram' :: Int -> Input -> Program -> Program
-runProgram' ip input program@(Program memory returnValue) =
-  let opcode = memory ! ip
+runProgram :: [Value] -> Program -> Program
+runProgram input program =
+  let memory = _memory program
+      ip = _ip program
+      opcode = memory ! ip
       instruction = parseOpcode opcode
    in case instruction of
-        Halt -> program
+        Halt -> setReturnValue 0 program
         Add p1 p2 _p3 ->
-          runProgram'
-            (ip + 4)
-            input
-            (Program (add (p1, ip + 1) (p2, ip + 2) (ip + 3) memory) returnValue)
+          runProgram input $
+          program
+            { _ip = ip + 4
+            , _memory = add (p1, ip + 1) (p2, ip + 2) (ip + 3) memory
+            }
         Multiply p1 p2 _p3 ->
-          runProgram'
-            (ip + 4)
-            input
-            (Program
-               (multiply (p1, ip + 1) (p2, ip + 2) (ip + 3) memory)
-               returnValue)
+          runProgram input $
+          program
+            { _ip = ip + 4
+            , _memory = multiply (p1, ip + 1) (p2, ip + 2) (ip + 3) memory
+            }
         Input ->
           case input of
             first:rest ->
-              runProgram'
-                (ip + 2)
-                rest
-                (Program (writeValue first (ip + 1) memory) returnValue)
+              runProgram rest $
+              program {_ip = ip + 2, _memory = writeValue first (ip + 1) memory}
             _ -> program
         Output ->
           let value = readValue (Position, ip + 1) memory
-           in runProgram' (ip + 2) input (Program memory (Just value))
+              newProgram = addOutput value program
+           in runProgram input $ newProgram {_ip = ip + 2}
         JumpIfTrue p1 p2 ->
           case readValue (p1, ip + 1) memory of
-            0 -> runProgram' (ip + 3) input program
-            _ -> runProgram' (readValue (p2, ip + 2) memory) input program
+            0 -> runProgram input $ program {_ip = ip + 3}
+            _ ->
+              runProgram input $
+              program {_ip = fromInteger (readValue (p2, ip + 2) memory)}
         JumpIfFalse p1 p2 ->
           case readValue (p1, ip + 1) memory of
-            0 -> runProgram' (readValue (p2, ip + 2) memory) input program
-            _ -> runProgram' (ip + 3) input program
+            0 ->
+              runProgram input $
+              program {_ip = fromInteger (readValue (p2, ip + 2) memory)}
+            _ -> runProgram input $ program {_ip = ip + 3}
         LessThan p1 p2 _p3 ->
           let value1 = readValue (p1, ip + 1) memory
               value2 = readValue (p2, ip + 2) memory
@@ -197,10 +286,9 @@ runProgram' ip input program@(Program memory returnValue) =
                 if value1 < value2
                   then 1
                   else 0
-           in runProgram'
-                (ip + 4)
-                input
-                (Program (writeValue result (ip + 3) memory) returnValue)
+           in runProgram input $
+              program
+                {_ip = ip + 4, _memory = writeValue result (ip + 3) memory}
         Equals p1 p2 _p3 ->
           let value1 = readValue (p1, ip + 1) memory
               value2 = readValue (p2, ip + 2) memory
@@ -208,17 +296,17 @@ runProgram' ip input program@(Program memory returnValue) =
                 if value1 == value2
                   then 1
                   else 0
-           in runProgram'
-                (ip + 4)
-                input
-                (Program (writeValue result (ip + 3) memory) returnValue)
+           in runProgram input $
+              program
+                {_ip = ip + 4, _memory = writeValue result (ip + 3) memory}
 
-readValue :: (PMode, Int) -> Memory -> Int
+readValue :: (PMode, Int) -> Memory -> Value
 readValue (Immediate, index) memory = memory ! index
-readValue (Position, index) memory = memory ! (memory ! index)
+readValue (Position, index) memory = memory ! (fromInteger (memory ! index))
 
-writeValue :: Int -> Int -> Memory -> Memory
-writeValue value index memory = memory // [(memory ! index, value)]
+writeValue :: Value -> Int -> Memory -> Memory
+writeValue value index memory =
+  memory // [(fromInteger (memory ! index), value)]
 
 add :: (PMode, Int) -> (PMode, Int) -> Int -> Memory -> Memory
 add first second resultIndex memory = writeValue result resultIndex memory
@@ -234,5 +322,11 @@ multiply first second resultIndex memory = writeValue result resultIndex memory
     secondValue = readValue second memory
     result = firstValue * secondValue
 
-parseNumber :: T.Text -> Int
+parseNumber :: T.Text -> Value
 parseNumber = read . T.unpack
+
+orElse :: Maybe a -> Maybe a -> Maybe a
+x `orElse` y =
+  case x of
+    Just _ -> x
+    Nothing -> y
