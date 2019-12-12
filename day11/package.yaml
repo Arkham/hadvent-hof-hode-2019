@@ -1,0 +1,51 @@
+name: day11
+version: 0.1.0.0
+github: "Arkham/day11"
+license: BSD3
+author: "Ju Liu"
+maintainer: "liuju86@gmail.com"
+copyright: "Copyright (c) Ju Liu"
+
+extra-source-files:
+  - README.md
+  - ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description: Please see the README on GitHub at <https://github.com/Arkham/day11#readme>
+
+dependencies:
+  - base >= 4.7 && < 5
+  - text
+  - unordered-containers
+  - ilist
+
+library:
+  source-dirs: src
+
+executables:
+  day11-exe:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - day11
+
+tests:
+  day11-test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - day11
