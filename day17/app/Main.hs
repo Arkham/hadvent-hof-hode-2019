@@ -9,6 +9,7 @@ import qualified Data.HashMap.Strict as HashMap
 import qualified Data.List as List
 import qualified Data.List.Index as Index
 import qualified Data.List.Split as Split
+import qualified Data.Maybe as Maybe
 import qualified Data.Text as T
 import qualified Data.Text.IO as TI
 import qualified Debug.Trace
@@ -200,7 +201,107 @@ main = do
   print $ sum $ map (uncurry (*)) intersections
   putStrLn "Part Two"
   let path = findPath state
+  putStrLn "Found Path!"
   TI.putStrLn $ prettifyPath path
+  let answer = findAnswer path
+  putStrLn "Found Answer!"
+  TI.putStrLn answer
+  let newProgram = buildProgram (HashMap.insert 0 2 memory)
+  let answerInput = map (fromIntegral . fromEnum) $ T.unpack answer
+  let (newOutput, _) = runProgramWithOutput answerInput newProgram
+  print newOutput
+
+{-|
+Manually figured out the repeating patterns:
+
+L,6,R,8,R,12,L,6,L,8,
+L,10,L,8,R,12,
+L,6,R,8,R,12,L,6,L,8,
+L,8,L,10,L,6,L,6,
+L,10,L,8,R,12,
+L,8,L,10,L,6,L,6,
+L,10,L,8,R,12,
+L,6,R,8,R,12,L,6,L,8,
+L,8,L,10,L,6,L,6,
+L,10,L,8,R,12
+
+sequence: A,B,A,C,B,C,B,A,C,B
+A: L,6,R,8,R,12,L,6,L,8
+B: L,10,L,8,R,12
+C: L,8,L,10,L,6,L,6
+
+answer :: T.Text
+answer =
+  T.intercalate
+    "\n"
+    [ "A,B,A,C,B,C,B,A,C,B"
+    , "L,6,R,8,R,12,L,6,L,8"
+    , "L,10,L,8,R,12"
+    , "L,8,L,10,L,6,L,6"
+    , "n\n"
+    ]
+-}
+longestRepeatingSubsequence :: Eq a => Int -> [a] -> [a]
+longestRepeatingSubsequence maxLen list =
+  let storage = HashMap.empty
+      listLen = length list
+      indexes = [(x, y) | x <- [1 .. listLen], y <- [(x + 1) .. listLen]]
+      (idx, len, _) =
+        List.foldl'
+          (\(resIndex, resLength, st) (i, j) ->
+             let previousLongest = HashMap.lookupDefault 0 (i - 1, j - 1) st
+                 currentLongest = previousLongest + 1
+              in if (list !! (i - 1) == list !! (j - 1)) &&
+                    previousLongest < (j - i)
+                   then let newSt = HashMap.insert (i, j) currentLongest st
+                         in if currentLongest > resLength &&
+                               currentLongest <= maxLen
+                              then (max i resIndex, currentLongest, newSt)
+                              else (resIndex, resLength, newSt)
+                   else (resIndex, resLength, st))
+          (0, 0, storage)
+          indexes
+   in List.take len $ List.drop (idx - len) list
+
+findAnswer :: [Step] -> T.Text
+findAnswer steps =
+  let maxNumberSteps = 10
+      a = longestRepeatingSubsequence maxNumberSteps steps
+      remaining = Split.splitOn a steps
+      b =
+        Maybe.fromMaybe [] $
+        List.find
+          (\el -> length (longestRepeatingSubsequence maxNumberSteps el) <= 3) $
+        filter (not . null) remaining
+      c = findC a b steps []
+      segments = findSegments a b c steps []
+   in T.intercalate
+        "\n"
+        [ T.intercalate "," segments
+        , prettifyPath a
+        , prettifyPath b
+        , prettifyPath c
+        , "n\n"
+        ]
+  where
+    findC a b s acc
+      | take (length a) s == a =
+        if not (null acc)
+          then acc
+          else findC a b (drop (length a) s) acc
+      | take (length b) s == b =
+        if not (null acc)
+          then acc
+          else findC a b (drop (length b) s) acc
+      | otherwise = findC a b (drop 1 s) (acc <> take 1 s)
+    findSegments _ _ _ [] acc = reverse acc
+    findSegments a b c s acc
+      | take (length a) s == a =
+        findSegments a b c (drop (length a) s) ("A" : acc)
+      | take (length b) s == b =
+        findSegments a b c (drop (length b) s) ("B" : acc)
+      | take (length c) s == c =
+        findSegments a b c (drop (length c) s) ("C" : acc)
 
 data Direction
   = ToRight
@@ -220,7 +321,7 @@ prettifyPath steps =
        case step of
          Turn ToRight -> "R"
          Turn ToLeft -> "L"
-         Forward n -> "F" <> T.pack (show n))
+         Forward n -> T.pack (show n))
     steps
 
 findPath :: State -> [Step]
