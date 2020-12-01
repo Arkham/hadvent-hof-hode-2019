@@ -61,6 +61,63 @@ However, you'll need to scan a larger area to understand the shape of the
 beam. How many points are affected by the tractor beam in the 50x50 area
 closest to the emitter? (For each of X and Y, this will be 0 through 49.)
 
+# Part Two
+
+You aren't sure how large Santa's ship is. You aren't even sure if you'll need
+to use this thing on Santa's ship, but it doesn't hurt to be prepared. You
+figure Santa's ship might fit in a 100x100 square.
+
+The beam gets wider as it travels away from the emitter; you'll need to be a
+minimum distance away to fit a square of that size into the beam fully. (Don't
+rotate the square; it should be aligned to the same axes as the drone grid.)
+
+For example, suppose you have the following tractor beam readings:
+
+#.......................................
+.#......................................
+..##....................................
+...###..................................
+....###.................................
+.....####...............................
+......#####.............................
+......######............................
+.......#######..........................
+........########........................
+.........#########......................
+..........#########.....................
+...........##########...................
+...........############.................
+............############................
+.............#############..............
+..............##############............
+...............###############..........
+................###############.........
+................#################.......
+.................########OOOOOOOOOO.....
+..................#######OOOOOOOOOO#....
+...................######OOOOOOOOOO###..
+....................#####OOOOOOOOOO#####
+.....................####OOOOOOOOOO#####
+.....................####OOOOOOOOOO#####
+......................###OOOOOOOOOO#####
+.......................##OOOOOOOOOO#####
+........................#OOOOOOOOOO#####
+.........................OOOOOOOOOO#####
+..........................##############
+..........................##############
+...........................#############
+............................############
+.............................###########
+
+In this example, the 10x10 square closest to the emitter that fits entirely
+within the tractor beam has been marked O. Within it, the point closest to the
+emitter (the only highlighted O) is at X=25, Y=20.
+
+Find the 100x100 square closest to the emitter that fits entirely within the
+tractor beam; within that square, find the point closest to the emitter. What
+value do you get if you take that point's X coordinate, multiply it by 10000,
+then add the point's Y coordinate? (In the example above, this would be
+250020.)
 
 -}
 main :: IO ()
@@ -71,17 +128,31 @@ main = do
         Index.indexed $ map parseNumber $ T.splitOn "," contents
   let program = buildProgram memory
   putStrLn "Part One"
-  let points = [ (x,y) | x <- [0..49], y <- [0..49] ]
-  let initialState = State { _map = HashMap.empty }
+  let points = [(x, y) | x <- [0 .. 49], y <- [0 .. 49]]
+  let initialState = State {_map = HashMap.empty}
   let state =
-       List.foldl'
-         (\s (x, y) ->
-           let (output, _) = runProgramWithOutput [fromIntegral x, fromIntegral y] program
-            in State { _map = HashMap.insert (x,y) (intToTile output) (_map s) })
-         initialState
-         points
+        List.foldl'
+          (\s (x, y) ->
+             let (output, _) =
+                   runProgramWithOutput [fromIntegral x, fromIntegral y] program
+              in State
+                   {_map = HashMap.insert (x, y) (intToTile output) (_map s)})
+          initialState
+          points
   printState state
-  print $ length $ filter (== Pulled) $ HashMap.elems (_map state)
+  let pulled = filter (\(k, v) -> v == Pulled) $ HashMap.toList (_map state)
+  print $ length $ pulled
+  putStrLn "Part Two"
+  let farPoints = [(x, y) | x <- [0 .. 2000], y <- [1000]]
+  print $
+    filter (\(_, _, v) -> v == Pulled) $
+    List.foldl'
+      (\acc (x, y) ->
+         let (output, _) =
+               runProgramWithOutput [fromIntegral x, fromIntegral y] program
+          in (x, y, intToTile output) : acc)
+      []
+      farPoints
 
 type Point = (Int, Int)
 
@@ -100,7 +171,6 @@ intToTile :: [Value] -> Tile
 intToTile [0] = Stationary
 intToTile [1] = Pulled
 intToTile other = trace ("other" <> T.pack (show other)) Stationary
-
 
 prettify :: Tile -> Char
 prettify Stationary = '.'
